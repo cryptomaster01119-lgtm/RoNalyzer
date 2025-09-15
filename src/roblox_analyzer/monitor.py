@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# .py file
-
 import requests
 import re
 import sys
@@ -39,12 +36,11 @@ def get_game_stats(universe_id: str) -> dict:
     if not data:
         raise RuntimeError("Resposta vazia do endpoint games.")
     g = data[0]
-    # Pegamos o máximo de campos seguros possíveis (verificamos com .get)
     return {
         "name": g.get("name"),
         "description": g.get("description"),
         "visits": int(g.get("visits") or 0),
-        "playing": int(g.get("playing") or 0) if g.get("playing") is not None else None,
+        "playing": int(g.get("playing")) if g.get("playing") is not None else None,
         "maxPlayers": int(g.get("maxPlayers") or 0),
         "creator": g.get("creator", {}).get("name") or g.get("creator", {}).get("displayName"),
         "creator_type": g.get("creator", {}).get("type"),
@@ -53,37 +49,33 @@ def get_game_stats(universe_id: str) -> dict:
         "universeId": str(g.get("universeId") or universe_id),
         "rootPlaceId": g.get("rootPlaceId") or g.get("placeId") or None,
         "access": g.get("access"),
-        "price": g.get("price"),  # pode ser None
+        "price": g.get("price"),
         "created": g.get("created") or g.get("createdAt") or None,
         "updated": g.get("updated") or g.get("updatedAt") or None,
-        "id": g.get("id") or g.get("placeId") or None
+        "id": g.get("id") or g.get("placeId") or None,
     }
 
 def get_votes(universe_id: str) -> dict:
-    # endpoint de votos (up/down)
     url = f"https://games.roblox.com/v1/games/votes?universeIds={universe_id}"
     r = requests.get(url, headers=HEADERS, timeout=10)
     r.raise_for_status()
     payload = r.json()
-    # normalmente vem como payload["data"] = [ { universeId:..., upVotes: N, downVotes: N, ... } ]
     arr = payload.get("data") or payload.get("Data") or []
     if arr:
         rec = arr[0]
         return {
             "upVotes": int(rec.get("upVotes") or rec.get("upvoteCount") or 0),
-            "downVotes": int(rec.get("downVotes") or rec.get("downvoteCount") or 0)
+            "downVotes": int(rec.get("downVotes") or rec.get("downvoteCount") or 0),
         }
     return {"upVotes": 0, "downVotes": 0}
 
 def get_thumbnail(universe_id: str, size="150x150") -> str:
-    # thumbnails API: retorna imageUrl se existir
     url = f"https://thumbnails.roblox.com/v1/games/icons?universeIds={universe_id}&size={size}&format=png"
     r = requests.get(url, headers=HEADERS, timeout=10)
     r.raise_for_status()
     data = r.json().get("data", [])
     if data and isinstance(data, list) and data[0].get("imageUrl"):
         return data[0]["imageUrl"]
-    # fallback: tente thumbnails via legacy
     return None
 
 def safe_str(x):
@@ -92,7 +84,6 @@ def safe_str(x):
 def human_readable_date(s):
     if not s:
         return "N/A"
-    # tenta parse (ISO)
     for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
         try:
             dt = datetime.strptime(s, fmt)
@@ -101,7 +92,7 @@ def human_readable_date(s):
             continue
     return s
 
-def imprimir_detalhado(stats: dict, votes: dict, thumbnail_url: str, place_input: str, save_json=False):
+def imprimir_detalhado(stats: dict, votes: dict, thumbnail_url: str, place_input: str, save_json=False, show_full_desc=False):
     name = stats.get("name") or "N/A"
     desc = stats.get("description") or "N/A"
     visits = stats.get("visits", 0) or 0
@@ -117,19 +108,23 @@ def imprimir_detalhado(stats: dict, votes: dict, thumbnail_url: str, place_input
     creator = stats.get("creator") or "N/A"
     creator_id = stats.get("creator_id") or "N/A"
 
-    eng_rate = (favs / visits * 100) if visits > 0 else 0.0
-    likes_per_1k = (favs / visits * 1000) if visits > 0 else 0.0
+    eng_rate_favs = (favs / visits * 100) if visits > 0 else 0.0
+    eng_rate_likes = (up / visits * 100) if visits > 0 else 0.0
+    likes_per_1k = (up / visits * 1000) if visits > 0 else 0.0
     up_ratio = (up / (up + down) * 100) if (up + down) > 0 else None
     occupancy = (playing / maxp * 100) if (playing is not None and maxp > 0) else None
 
     sep = "=" * 60
     print("\n" + sep)
-    print(f"ROBLOX GAME ANALYZER — DETAILED REPORT")
+    print("ROBLOX GAME ANALYZER — DETAILED REPORT")
     print(sep + "\n")
 
     print(f"Input PlaceID/URL: {place_input}")
     print(f"Name: {name}")
-    print(f"Description: {desc[:400] + ('...' if len(desc) > 400 else '')}")
+    if show_full_desc:
+        print(f"Description: {desc}")
+    else:
+        print(f"Description: {desc[:400] + ('...' if len(desc) > 400 else '')}")
     print()
     print(f"Universe ID: {uni}")
     print(f"Root/Representative Place ID: {root_place}")
@@ -148,12 +143,13 @@ def imprimir_detalhado(stats: dict, votes: dict, thumbnail_url: str, place_input
         print(f"Occupancy: {occupancy:.2f}% of max players")
     print()
     print("— Social / Feedback —")
-    print(f"Favorites / Likes: {favs:,}")
-    print(f"Upvotes: {up:,}  Downvotes: {down:,}")
+    print(f"Favorites: {favs:,}")
+    print(f"Likes (upVotes): {up:,}  Downvotes: {down:,}")
     if up_ratio is not None:
         print(f"Upvote ratio: {up_ratio:.2f}%")
-    print(f"Engagement (likes/visits): {eng_rate:.4f}%")
-    print(f"Likes per 1k visits: {likes_per_1k:.4f}")
+    print(f"Engagement (favorites/visits): {eng_rate_favs:.4f}%")
+    print(f"Engagement (likes/visits): {eng_rate_likes:.6f}%")
+    print(f"Likes per 1k visits: {likes_per_1k:.6f}")
     print()
     print("— Misc —")
     print(f"Price (if any): {safe_str(stats.get('price'))}")
@@ -173,11 +169,12 @@ def imprimir_detalhado(stats: dict, votes: dict, thumbnail_url: str, place_input
             "votes": votes,
             "thumbnail": thumbnail_url,
             "metrics": {
-                "engagement_percent": eng_rate,
+                "engagement_favorites_percent": eng_rate_favs,
+                "engagement_likes_percent": eng_rate_likes,
                 "likes_per_1000_visits": likes_per_1k,
-                "occupancy_percent": occupancy
+                "occupancy_percent": occupancy,
             },
-            "generated_at": datetime.utcnow().isoformat() + "Z"
+            "generated_at": datetime.utcnow().isoformat() + "Z",
         }
         fname = f"roblox_report_{uni}.json"
         with open(fname, "w", encoding="utf-8") as f:
@@ -185,7 +182,7 @@ def imprimir_detalhado(stats: dict, votes: dict, thumbnail_url: str, place_input
         print(f"Relatório salvo como: {fname}")
 
 def main():
-    print("=== Roblox Game Analyzer (DETALHADO) ===")
+    print("=== Roblox Game Analyzer (DETAILED) ===")
     inp = input("Cole o link do jogo Roblox (ou PlaceID): ").strip()
     try:
         place = extrair_place_id(inp)
@@ -216,17 +213,15 @@ def main():
     except Exception:
         thumb = None
 
-    # Pergunta se quer salvar
-    salvar = None
     try:
-        imprimir_detalhado(stats, votes, thumb, inp, save_json=False)
+        show_full = input("Mostrar descrição completa? (y/N): ").strip().lower() in ("y", "yes")
+        imprimir_detalhado(stats, votes, thumb, inp, save_json=False, show_full_desc=show_full)
         s = input("Deseja salvar um relatório JSON local? (s/N): ").strip().lower()
-        if s == "s" or s == "y":
-            imprimir_detalhado(stats, votes, thumb, inp, save_json=True)
+        if s in ("s", "y"):
+            imprimir_detalhado(stats, votes, thumb, inp, save_json=True, show_full_desc=show_full)
     except KeyboardInterrupt:
         print("\nCancelado pelo usuário.")
         sys.exit(0)
 
 if __name__ == "__main__":
     main()
-  
